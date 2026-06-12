@@ -1,0 +1,17 @@
+# Datasets (not tracked)
+dataset/
+
+# Claude
+.claude/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# OS
+Thumbs.db
+.DS_Store
