@@ -1,127 +1,122 @@
 # ============================================================
-#  STEP 1 : 게임 화면의 '토대' 만들기
-#  목표 - 창을 좌우로 나눠서, 왼쪽엔 내 얼굴(웹캠), 오른쪽엔 빈 게임판을 띄운다
+#  STEP 2 : 동작 감지 붙이기 (Face Landmarker 버전)
+#  목표 - 왼쪽엔 내 얼굴, 오른쪽 게임 영역에 "지금 무슨 동작 중인지" 글자로 표시
+#         입을 벌리면 오른쪽에 "OPEN!" 이라고 뜬다
 # ============================================================
 
-# ─── 필요한 도구(라이브러리) 불러오기 ───
-import pygame              # 게임 화면을 만들고 그림을 그리는 도구
-import cv2                 # 웹캠을 켜고 영상을 다루는 도구 (OpenCV)
-import mediapipe as mp     # 얼굴을 인식하는 도구 (구글)
+import pygame
+import cv2
+import mediapipe as mp
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
 
+# ─── 기본 설정 ───
+WINDOW_W, WINDOW_H = 1280, 480
+HALF_W = WINDOW_W // 2
+MODEL_PATH = "C:/Users/sinhj/embeded/game/face_landmarker.task"      # 같은 폴더에 있는 모델 파일
 
-# ============================================================
-#  1. 기본 설정값 정하기 (숫자를 맨 위에 모아두면 나중에 고치기 쉬움)
-# ============================================================
+# ─── pygame 준비 ───
+pygame.init()
+screen = pygame.display.set_mode((WINDOW_W, WINDOW_H))
+pygame.display.set_caption("꿀떡 꿀떡 게임")
+clock = pygame.time.Clock()
+# 글자를 쓰려면 폰트가 필요함 (기본 폰트, 크기 지정)
+font_big = pygame.font.Font(None, 80)     # 큰 글자 (동작 이름용)
+font_small = pygame.font.Font(None, 40)   # 작은 글자 (수치용)
 
-WINDOW_W, WINDOW_H = 1280, 480   # 창 크기: 가로 1280, 세로 480 (가로로 길쭉하게)
-HALF_W = WINDOW_W // 2           # 가로의 절반(640). 왼쪽/오른쪽 경계.
-                                 # '//'는 나눈 뒤 소수점 버리고 정수만 (640.0이 아니라 640)
-
-
-# ============================================================
-#  2. pygame(게임 화면) 준비하기
-# ============================================================
-
-pygame.init()                                          # pygame 시동 (항상 맨 처음)
-screen = pygame.display.set_mode((WINDOW_W, WINDOW_H)) # 창 만들기. screen = 그림 그릴 도화지
-pygame.display.set_caption("꿀떡 꿀떡 게임")            # 창 제목
-clock = pygame.time.Clock()                            # 게임 속도(프레임) 조절용 시계
-
-
-# ============================================================
-#  3. 얼굴 인식 + 웹캠 준비하기
-# ============================================================
-
-mp_face_mesh = mp.solutions.face_mesh              # 얼굴 점 468개 찾는 기능
-mp_drawing = mp.solutions.drawing_utils            # 점/선을 그려주는 기능
-mp_drawing_styles = mp.solutions.drawing_styles    # 그릴 때의 색·굵기 기본 스타일
-
-face_mesh = mp_face_mesh.FaceMesh(
-    max_num_faces=1,              # 얼굴 1명만
-    refine_landmarks=True,        # 입술·눈 정밀하게 (재활엔 입이 중요)
-    min_detection_confidence=0.5, # 얼굴이라 확신하는 최소 기준
-    min_tracking_confidence=0.5   # 찾은 얼굴 계속 따라가는 최소 기준
+# ─── Face Landmarker 준비 ───
+base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
+options = vision.FaceLandmarkerOptions(
+    base_options=base_options,
+    output_face_blendshapes=True,        # 표정 수치(블렌드셰이프) 켜기
+    num_faces=1
 )
+detector = vision.FaceLandmarker.create_from_options(options)
 
-cap = cv2.VideoCapture(0)         # 0번 카메라(기본 웹캠) 켜기
+cap = cv2.VideoCapture(0)
+
+# ─── 색상 ───
+COLOR_GAME_BG = (30, 30, 50)
+COLOR_WHITE = (255, 255, 255)
+COLOR_GREEN = (0, 255, 0)
+
+# ─── 동작 판정 기준값 ───
+# jawOpen 수치가 이 값 이상이면 '입 벌림'으로 판정 (실행하며 조절)
+OPEN_THRESHOLD = 0.4
 
 
-# ============================================================
-#  4. 색깔 미리 정해두기 (색 = 빨강R 초록G 파랑B 를 0~255로 섞음)
-# ============================================================
+def detect_action(blendshapes):
+    """표정 수치를 받아서 현재 동작 이름을 반환.
+    지금은 '입 벌리기' 하나만. 나중에 동작을 여기 추가하면 됨."""
+    # 수치들을 이름→점수 형태로 정리
+    scores = {b.category_name: b.score for b in blendshapes}
 
-COLOR_GAME_BG = (30, 30, 50)      # 오른쪽 게임 배경색 (어두운 남색)
+    jaw_open = scores.get("jawOpen", 0)   # 턱(입) 벌림 정도
+
+    # 판정
+    if jaw_open >= OPEN_THRESHOLD:
+        return "OPEN!", jaw_open
+    else:
+        return "...", jaw_open
 
 
-# ============================================================
-#  5. 게임의 심장 = 반복문(while)
-#  게임은 '매 순간 화면을 다시 그리는' 일을 1초에 수십 번 반복함
-# ============================================================
+running = True
+while running:
 
-running = True                    # 게임이 돌아가는 중인지 표시하는 스위치
+    # ─── (1) 종료 이벤트 ───
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_q:
+            running = False
 
-while running:                    # running이 True인 동안 무한 반복
-
-    # ─── (1) 사용자의 행동(이벤트) 확인 ───
-    for event in pygame.event.get():           # 그동안 일어난 사건 하나씩 확인
-        if event.type == pygame.QUIT:          # 창의 X(닫기) 버튼을 눌렀으면
-            running = False                    # 스위치 꺼서 종료 준비
-        if event.type == pygame.KEYDOWN and event.key == pygame.K_q:  # 'q' 키 눌렀으면
-            running = False                    # 마찬가지로 종료
-
-    # ─── (2) 웹캠에서 사진 한 장 가져오기 ───
-    success, frame = cap.read()    # success=잘 읽었는지, frame=실제 사진
+    # ─── (2) 웹캠 읽기 ───
+    success, frame = cap.read()
     if not success:
-        print("웹캠을 못 읽음! 카메라가 다른 곳에서 사용 중일 수 있어요.")
-        continue                   # 못 읽으면 이번 반복 건너뛰기
+        print("웹캠을 못 읽음!")
+        continue
+    frame = cv2.flip(frame, 1)
 
-    frame = cv2.flip(frame, 1)     # 좌우 반전 (거울처럼 보이게)
+    # ─── (3) Face Landmarker로 얼굴 인식 ───
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+    result = detector.detect(mp_image)
 
-    # ─── (3) 얼굴 인식 돌리기 ───
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # 색 순서 변환 (OpenCV=BGR → MediaPipe=RGB)
-    results = face_mesh.process(rgb)              # 얼굴 인식 실행
+    # ─── (4) 동작 판정 ───
+    action = "..."          # 기본값 (얼굴 없을 때)
+    jaw_value = 0
+    if result.face_blendshapes:                  # 얼굴이 잡혔으면
+        action, jaw_value = detect_action(result.face_blendshapes[0])
 
-    # ─── (4) 인식된 얼굴에 윤곽선 그리기 ───
-    if results.multi_face_landmarks:              # 얼굴이 찾아졌으면
-        for face_landmarks in results.multi_face_landmarks:
-            mp_drawing.draw_landmarks(
-                image=frame,                      # frame(사진) 위에 그림
-                landmark_list=face_landmarks,     # 찾은 얼굴 점들
-                connections=mp_face_mesh.FACEMESH_CONTOURS,  # 눈·입·얼굴형 윤곽선
-                landmark_drawing_spec=None,       # 점은 안 그림 (선만)
-                connection_drawing_spec=mp_drawing_styles
-                    .get_default_face_mesh_contours_style()
-            )
-
-    # ─── (5) 웹캠 사진을 pygame 그림으로 변환 ───
-    # ⚠️ OpenCV 사진과 pygame 그림은 데이터 정리 방식이 달라서 맞춰줘야 함
-    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)        # 색 RGB로
-    frame_resized = cv2.resize(frame_rgb, (HALF_W, WINDOW_H)) # 왼쪽 절반 크기(640x480)로
-    frame_surface = pygame.image.frombuffer(                 # pygame 그림으로 변환
-        frame_resized.tobytes(),    # 사진 데이터를 바이트로
-        (HALF_W, WINDOW_H),         # 크기 (가로, 세로)
-        "RGB"                       # 색 형식
+    # ─── (5) 웹캠 영상을 pygame 그림으로 변환 ───
+    frame_resized = cv2.resize(rgb, (HALF_W, WINDOW_H))   # rgb는 이미 RGB 색
+    frame_surface = pygame.image.frombuffer(
+        frame_resized.tobytes(), (HALF_W, WINDOW_H), "RGB"
     )
 
-    # ─── (6) 실제로 화면에 그리기 (뒤에서 앞으로 덮어 그림) ───
-    screen.fill(COLOR_GAME_BG)             # 1. 도화지 전체를 배경색으로 칠함
-    screen.blit(frame_surface, (0, 0))     # 2. 왼쪽 위(0,0)에 웹캠 영상 붙임
+    # ─── (6) 화면 그리기 ───
+    screen.fill(COLOR_GAME_BG)              # 배경 칠하기
+    screen.blit(frame_surface, (0, 0))     # 왼쪽에 웹캠
 
-    # 가운데 경계선 (왼쪽 게임 / 오른쪽 게임 구분 흰 세로선)
-    pygame.draw.line(
-        screen, (255, 255, 255),    # 흰색
-        (HALF_W, 0), (HALF_W, WINDOW_H),  # 가운데 위 → 가운데 아래
-        2                           # 굵기 2픽셀
-    )
+    # 가운데 경계선
+    pygame.draw.line(screen, COLOR_WHITE, (HALF_W, 0), (HALF_W, WINDOW_H), 2)
 
-    pygame.display.flip()      # 지금까지 그린 걸 실제 화면에 반영 (이게 있어야 보임)
-    clock.tick(30)             # 1초에 30번만 반복 (속도 조절)
+    # ─── 오른쪽 게임 영역에 동작 표시 ───
+    # 동작 이름 (큰 글자, 가운데쯤). 입 벌리면 초록색, 아니면 흰색.
+    color = COLOR_GREEN if action == "OPEN!" else COLOR_WHITE
+    text_surface = font_big.render(action, True, color)
+    # 오른쪽 영역의 가운데에 배치 (글자 폭만큼 빼서 중앙 정렬)
+    text_x = HALF_W + (HALF_W - text_surface.get_width()) // 2
+    screen.blit(text_surface, (text_x, WINDOW_H // 2 - 40))
 
+    # jawOpen 수치도 작게 표시 (기준값 조절에 참고)
+    value_text = font_small.render(f"jawOpen: {jaw_value:.2f}", True, COLOR_WHITE)
+    screen.blit(value_text, (HALF_W + 30, 30))
 
-# ============================================================
-#  6. 게임 종료 뒷정리 (while을 빠져나오면 실행)
-# ============================================================
+    pygame.display.flip()
+    clock.tick(30)
 
-cap.release()        # 웹캠 끄기
-face_mesh.close()    # 얼굴 인식기 닫기
-pygame.quit()        # pygame 창 닫기
+# ─── 종료 처리 ───
+cap.release()
+detector.close()
+pygame.quit()

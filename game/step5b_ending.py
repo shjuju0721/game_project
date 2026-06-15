@@ -102,6 +102,11 @@ def draw_game_world(state):
     screen.fill(COLOR_GAME_BG)
     screen.blit(frame_surface, (0, 0))
     pygame.draw.line(screen, COLOR_WHITE, (HALF_W, 0), (HALF_W, WINDOW_H), 2)
+
+    # ★ 여기서부터 게임 영역(오른쪽)에만 그리도록 울타리 치기
+    game_area = pygame.Rect(HALF_W, 0, HALF_W, WINDOW_H)
+    screen.set_clip(game_area)
+
     pygame.draw.rect(screen, COLOR_GROUND, (HALF_W, GROUND_Y + 35, HALF_W, WINDOW_H - GROUND_Y))
     for obs in state["obstacles"]:
         if obs["type"] == "hole":
@@ -122,6 +127,9 @@ def draw_game_world(state):
                 step_top = GROUND_Y - step_h
                 pygame.draw.rect(screen, COLOR_STICK, (step_x, step_top, STAIR_STEP_W, step_h + 40))
                 pygame.draw.rect(screen, COLOR_TTEOK_EDGE, (step_x, step_top, STAIR_STEP_W, step_h + 40), 2)
+
+    # ★ 울타리 풀기 (이 다음부터는 화면 전체에 그릴 수 있게)
+    screen.set_clip(None)
 
 
 def reset_game():
